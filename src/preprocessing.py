@@ -1,7 +1,7 @@
 import os
 import re
 from datasets import load_dataset, Audio, DatasetDict, concatenate_datasets, Features, Value
-import src.config as config
+import config
 
 def load_and_prepare_data():
     # It will load the Common Voice dataset from TSV files, cleans it and prepares it for training
