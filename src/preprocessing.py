@@ -1,7 +1,7 @@
 import os
 import re
 from datasets import load_dataset, Audio, DatasetDict, concatenate_datasets, Features, Value
-import config
+from . import config
 
 def load_and_prepare_data():
     # It will load the Common Voice dataset from TSV files, cleans it and prepares it for training
@@ -50,6 +50,30 @@ def load_and_prepare_data():
     remove_columns = ["client_id", "sentence_id", "sentence_domain", "up_votes", "down_votes", 
                       "age", "gender", "accents", "variant", "locale", "segment"] 
     common_voice = common_voice.remove_columns(remove_columns)
+    
+    # Map audio path and clean data
+    def map_audio_path(batch):
+        batch["audio"] = os.path.join(config.clips_path, batch["path"])
+        return batch
+
+    common_voice = common_voice.map(map_audio_path, num_proc=1)
+
+    # Clean the transcription text
+    chars_to_remove_regex = r"[\,\?\.\!\-\;\:\"\“\%\‘\”\\']"
+    def remove_special_characters(batch):
+        if batch["sentence"]:
+            batch["sentence"] = re.sub(chars_to_remove_regex, '', batch["sentence"]).lower()
+        else:
+            batch["sentence"] = ""
+        return batch
+
+    common_voice = common_voice.map(remove_special_characters, num_proc=1)
+    
+    # Filter out empty sentences
+    common_voice = common_voice.filter(lambda example: example['sentence'] is not None and len(example['sentence']) > 0)
+
+    # Load audio and resample
+    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=16_000))
 
     return common_voice
 
