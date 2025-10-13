@@ -1,9 +1,7 @@
 mlproject-env/
-venv/
 __pycache__/
 *.pyc
-data/
-wav2vec2-xls-r-300m-common-voice-fr-ft/
+jager26/wav2vec2-xls-r-300m-common-voice-fr-ft/
 .vscode/
 .DS_Store
 vocab.json

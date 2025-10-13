@@ -35,10 +35,10 @@ def main():
 
     print('Loading Tokenizer and Feature Extractor')
     tokenizer = Wav2Vec2CTCTokenizer.from_pretrained('./', unk_token='[UNK]', pad_token='[PAD]', word_delimiter_token='|')
-    tokenizer.push_to_hub('jager26/wav2vec2-xls-r-300m-common-voice-fr-ft')
-
     feature_extractor = Wav2Vec2FeatureExtractor(feature_size=1, sampling_rate=16000, padding_value=0.0, do_normalize=True, return_attention_mask=True)
     processor = Wav2Vec2Processor(feature_extractor=feature_extractor, tokenizer=tokenizer)
+    processor.save_pretrained(config.repo_name)
+    print(f"Processor saved to '{config.repo_name}/' directory")
 
     # Resampling audio to 16kHz
     print('Resampling audio to 16kHz')
