@@ -1,10 +1,9 @@
 import json
 from . import preprocessing, config
-from datasets import Audio
+from datasets import Audio, DatasetDict
 from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 
-def save_processor():
-    dataset = preprocessing.load_and_prepare_datasets()
+def save_processor(dataset: DatasetDict):
 
     def extract_all_chars(batch):
         all_text = ' '.join(batch['sentence'])
@@ -40,25 +39,4 @@ def save_processor():
     processor.save_pretrained(config.repo_name)
     print(f"Processor saved to '{config.repo_name}/' directory")
 
-    # Resampling audio to 16kHz
-    print('Resampling audio to 16kHz')
-    dataset['train'] = dataset['train'].cast_column('audio', Audio(sampling_rate = 16000))
-    dataset['test'] = dataset['test'].cast_column('audio', Audio(sampling_rate = 16000))
-
-    def prepare_dataset(batch):
-        audio = batch['audio']
-        batch['input_values'] = processor(audio['array'], sampling_rate=audio['sampling_rate']).input_values[0]
-        batch['input_length'] = len(batch['input_values'])
-        with processor.as_target_processor():
-            batch["labels"] = processor(batch["sentence"]).input_ids
-        return batch
-
-    dataset['train'] = dataset['train'].map(prepare_dataset, remove_columns=dataset['train'].column_names, num_proc=4)
-    dataset['test'] = dataset['test'].map(prepare_dataset, remove_columns=dataset['test'].column_names, num_proc=4)
-    print('Resampling done')
-
-    # Filter all sequences that are longer than 5 seconds
-    print('Filter sequences that are longer than 5 seconds')
-    max_input_length = 5.0
-    dataset['train'] = dataset['train'].filter(lambda x: x < max_input_length * processor.feature_extractor.sampling_rate, input_columns=['input_length'])
-    print('Done filtering sequencies that are longer than 5 seconds')
+    return processor
