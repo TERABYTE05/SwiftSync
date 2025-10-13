@@ -2,6 +2,7 @@ name: mlproject-env
 
 channels:
   - pytorch
+  - nvidia
   - conda-forge
   - defaults
 
@@ -12,3 +13,4 @@ dependencies:
   - pytorch
   - torchvision
   - torchaudio
+  - pytorch-cuda=11.8
