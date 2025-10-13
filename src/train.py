@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from transformers import Wav2Vec2Processor, Wav2Vec2ForCTC, TrainingArguments, Trainer
 from . import config
 from .preprocessing import load_and_prepare_datasets
-from .processor import create_and_save_processor
+from .processor import save_processor
 
 def main():
     # Load and Prepare Data
@@ -18,7 +18,7 @@ def main():
 
     # Create the Processor
     print("Creating model processor...")
-    processor = create_and_save_processor(dataset)
+    processor = save_processor(dataset)
     print("Processor created successfully...")
 
     # Define the Data Collator
