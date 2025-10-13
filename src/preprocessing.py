@@ -31,6 +31,3 @@ def load_and_prepare_datasets():
 
     return dataset
 
-if __name__ == "__main__":
-    dataset = load_and_prepare_datasets()
-    print(dataset)

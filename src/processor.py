@@ -3,7 +3,7 @@ from . import preprocessing, config
 from datasets import Audio
 from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 
-def main():
+def save_processor():
     dataset = preprocessing.load_and_prepare_datasets()
 
     def extract_all_chars(batch):
@@ -62,6 +62,3 @@ def main():
     max_input_length = 5.0
     dataset['train'] = dataset['train'].filter(lambda x: x < max_input_length * processor.feature_extractor.sampling_rate, input_columns=['input_length'])
     print('Done filtering sequencies that are longer than 5 seconds')
-
-if __name__ == '__main__':
-    main()
