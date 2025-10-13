@@ -1,84 +1,30 @@
-import os
 import re
-from datasets import load_dataset, Audio, DatasetDict, concatenate_datasets, Features, Value
-from . import config
+from datasets import load_dataset, DatasetDict
 
-def load_and_prepare_data():
-    # It will load the Common Voice dataset from TSV files, cleans it and prepares it for training
-    # This will return a dictionary containing the 'train' and 'test' splits cleaned
-
-    column_names = [
-        "client_id", "path", "sentence_id", "sentence", "sentence_domain",
-        "up_votes", "down_votes", "age", "gender", "accents", "variant",
-        "locale", "segment"
-    ]
-    feature_types = Features({col: Value("string") for col in column_names})
-
-    # load dataset from .tsv files
-    try:
-        train_df = load_dataset(
-            "csv",
-            data_files = [os.path.join(config.root_path, "train.tsv")],
-            delimiter = "\t",
-            features = feature_types,
-        )["train"]
-        
-        validated_df = load_dataset(
-            "csv",
-            data_files = [os.path.join(config.root_path, "validated.tsv")],
-            delimiter = "\t",
-            features = feature_types,
-        )["train"]
-
-        test_df = load_dataset(
-            "csv",
-            data_files = [os.path.join(config.root_path, "test.tsv")],
-            delimiter = "\t",
-            features = feature_types,
-        )["train"]
-        
-    except FileNotFoundError as e:
-        print("Could not find dataset files")
-        print(e)
-        exit()
-
-    # Combine train and validated splits
-    train_dataset = concatenate_datasets([train_df, validated_df])
-    common_voice = DatasetDict({"train": train_dataset, "test": test_df})  
-
-    # Remove unwanted columns
-    remove_columns = ["client_id", "sentence_id", "sentence_domain", "up_votes", "down_votes", 
-                      "age", "gender", "accents", "variant", "locale", "segment"] 
-    common_voice = common_voice.remove_columns(remove_columns)
+def load_and_prepare_datasets():
+    # Load the dataset from HF and preprocess dataset
+    print('Loading dataset')
+    dataset = DatasetDict()
+    dataset['train'] = load_dataset('mozilla-foundation/common_voice_17_0', 'fr', split='train', token = True, trust_remote_code = True)
+    dataset['test'] = load_dataset('mozilla-foundation/common_voice_17_0', 'fr', split='test', token = True, trust_remote_code = True)
     
-    # Map audio path and clean data
-    def map_audio_path(batch):
-        batch["audio"] = os.path.join(config.clips_path, batch["path"])
+    # Remove unnecessary columns
+    print('removing unnecessary columns')
+    cols_to_remove = ['client_id', 'sentence_id', 'sentence_domain', 'up_votes', 'down_votes', 'age', 'gender', 'accents', 'variant', 'locale', 'segment']
+    dataset['train'] = dataset['train'].remove_columns(cols_to_remove)
+    dataset['test'] = dataset['test'].remove_columns(cols_to_remove)
+
+    # Remove unnecessary characters 
+    def remove_special_char(batch):
+        chars_to_remove = '[\,\?\.\!\-\;\:\"\“\%\‘\”\�\']'
+        batch['sentence'] = re.sub(chars_to_remove, '', batch['sentence'])
         return batch
+    print('removing special characters')
+    dataset['train'] = dataset['train'].map(remove_special_char)
+    dataset['test'] = dataset['test'].map(remove_special_char)
 
-    common_voice = common_voice.map(map_audio_path, num_proc=1)
+    return dataset
 
-    # Clean the transcription text
-    chars_to_remove_regex = r"[\,\?\.\!\-\;\:\"\“\%\‘\”\\']"
-    def remove_special_characters(batch):
-        if batch["sentence"]:
-            batch["sentence"] = re.sub(chars_to_remove_regex, '', batch["sentence"]).lower()
-        else:
-            batch["sentence"] = ""
-        return batch
-
-    common_voice = common_voice.map(remove_special_characters, num_proc=1)
-    
-    # Filter out empty sentences
-    common_voice = common_voice.filter(lambda example: example['sentence'] is not None and len(example['sentence']) > 0)
-
-    # Load audio and resample
-    common_voice = common_voice.cast_column("audio", Audio(sampling_rate=16_000))
-
-    return common_voice
-
-if __name__ == '__main__':
-    print("Loading and preparing data...")
-    prepared_data = load_and_prepare_data()
-    print("Sample from training set:")
-    print(prepared_data["train"][0])
+if __name__ == "__main__":
+    dataset = load_and_prepare_datasets()
+    print(dataset)
