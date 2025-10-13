@@ -10,18 +10,18 @@ def load_and_prepare_datasets():
     
     # Remove unnecessary columns
     print('removing unnecessary columns')
-    cols_to_remove = ['client_id', 'sentence_id', 'sentence_domain', 'up_votes', 'down_votes', 'age', 'gender', 'accents', 'variant', 'locale', 'segment']
-    dataset['train'] = dataset['train'].remove_columns(cols_to_remove)
-    dataset['test'] = dataset['test'].remove_columns(cols_to_remove)
+    cols_to_remove = ['client_id', 'up_votes', 'down_votes', 'age', 'gender', 'accent', 'locale', 'segment', 'variant']
+    dataset = dataset.remove_columns(cols_to_remove)
 
     # Remove unnecessary characters 
     def remove_special_char(batch):
         chars_to_remove = '[\,\?\.\!\-\;\:\"\“\%\‘\”\�\']'
-        batch['sentence'] = re.sub(chars_to_remove, '', batch['sentence'])
+        if batch['sentence']:
+            batch['sentence'] = re.sub(chars_to_remove, '', batch['sentence'].lower())
         return batch
+    
     print('removing special characters')
-    dataset['train'] = dataset['train'].map(remove_special_char)
-    dataset['test'] = dataset['test'].map(remove_special_char)
+    dataset = dataset.map(remove_special_char)
 
     return dataset
 

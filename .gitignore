@@ -6,3 +6,4 @@ data/
 wav2vec2-xls-r-300m-common-voice-fr-ft/
 .vscode/
 .DS_Store
+vocab.json
