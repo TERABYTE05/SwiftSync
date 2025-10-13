@@ -35,7 +35,7 @@ def main():
             batch["labels"] = processor(batch["sentence"]).input_ids
         return batch
 
-    dataset = dataset.map(prepare_dataset, num_proc=1)
+    dataset = dataset.map(prepare_dataset, num_proc=4)
     print('Resampling done')
 
     # Filter all sequences that are longer than 5 seconds
