@@ -3,7 +3,7 @@ from . import preprocessing, config
 from datasets import Audio, DatasetDict
 from transformers import Wav2Vec2CTCTokenizer, Wav2Vec2FeatureExtractor, Wav2Vec2Processor
 
-def save_processor(dataset: DatasetDict):
+def create_and_save_processor(dataset: DatasetDict):
 
     def extract_all_chars(batch):
         all_text = ' '.join(batch['sentence'])
