@@ -1,0 +1,114 @@
+# ===========================
+# General Python
+# ===========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+MANIFEST
+
+# ===========================
+# Virtual Environments
+# ===========================
+.venv/
+venv/
+env/
+ENV/
+*.env
+*.venv
+
+# ===========================
+# IDE / Editor Files
+# ===========================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ===========================
+# Logs & Reports
+# ===========================
+*.log
+logs/
+*.out
+*.err
+nohup.out
+training_history.json
+training_output/
+training_output_streaming/
+training_output_with_asr/
+training_output_without_asr/
+
+# ===========================
+# Checkpoints & Model Weights
+# ===========================
+checkpoints/
+*.pt
+*.bin
+*.ckpt
+*.safetensors
+best_model_*/
+step-*/
+training_state.pt
+
+# ===========================
+# Datasets & Cache
+# ===========================
+data/
+dataset/
+organized_data/
+*.csv
+*.json
+*.tsv
+*.zip
+*.tar
+*.tar.gz
+*.wav
+*.flac
+*.mp3
+*.npy
+*.npz
+
+# Hugging Face / Transformers cache
+.cache/
+.huggingface/
+transformers_cache/
+datasets_cache/
+torch_cache/
+
+# ===========================
+# Temporary / Runtime
+# ===========================
+tmp/
+temp/
+*.tmp
+*.bak
+*.old
+*.pid
+
+# ===========================
+# Jupyter / Colab
+# ===========================
+.ipynb_checkpoints/
+*.ipynb
+*.nbconvert.ipynb
+
+# ===========================
+# System Files
+# ===========================
+*.bat
+*.sh
+*.exe
+*.ps1
+
+test.py
+diagnose.py

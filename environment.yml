@@ -1,0 +1,13 @@
+name: swiftsync
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - ffmpeg
+  - libsndfile
+  - pytorch::pytorch>=2.0.0
+  - pytorch::torchaudio>=2.0.0
+  - pip
