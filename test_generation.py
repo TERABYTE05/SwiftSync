@@ -1,7 +1,7 @@
 """
-COMPLETE FIXED: Streaming Speech-to-Speech Translation Training
-Fixes all generation errors using correct HuggingFace methods
-Based on official documentation: output_tokens[batch_idx].tolist()[0]
+CORRECTED: Streaming Speech-to-Speech Translation Training
+Uses proper workflow: Speech-to-Text fine-tuning approach
+Based on Facebook's official fine-tuning methodology
 """
 
 import os
@@ -30,42 +30,50 @@ class Config:
     checkpoints_dir = "training_output_streaming/checkpoints"
     logs_dir = "training_output_streaming/logs"
     
-    s2s_model_name = "facebook/seamless-m4t-v2-large"
+    # Use Speech-to-Text model instead of full S2S for fine-tuning
+    s2st_model_name = "facebook/seamless-m4t-v2-large"
     
-    batch_size = 2
-    gradient_accumulation_steps = 8
-    num_epochs = 1
-    learning_rate = 2e-4
-    warmup_steps = 500
+    batch_size = 4  # Increased for better training
+    gradient_accumulation_steps = 4
+    num_epochs = 3
+    learning_rate = 5e-5  # Lower LR for stability
+    warmup_steps = 200
     weight_decay = 0.01
     
-    lora_r = 32
-    lora_alpha = 64
+    lora_r = 16  # Reduced for stability
+    lora_alpha = 32
     lora_dropout = 0.05
-    lora_target_modules = ["q_proj", "v_proj", "k_proj", "out_proj", "fc1", "fc2"]
+    # Target only decoder for text generation
+    lora_target_modules = ["q_proj", "v_proj", "out_proj"]
     
     sample_rate = 16000
-    chunk_duration = 2.0
-    hop_duration = 0.5
+    chunk_duration = 4.0  # Longer chunks for better context
+    hop_duration = 2.0
     chunk_samples = int(chunk_duration * sample_rate)
     hop_samples = int(hop_duration * sample_rate)
     
     max_grad_norm = 1.0
-    clear_cache_steps = 50
+    clear_cache_steps = 25
     
-    logging_steps = 50
-    save_steps = 500
-    eval_steps = 500
+    logging_steps = 25
+    save_steps = 250
+    eval_steps = 250
     log_sample_predictions = 3
     
     train_split = "train"
     val_split = "dev"
-    max_val_samples = 100
+    max_val_samples = 50
     
     device = "cuda" if torch.cuda.is_available() else "cpu"
     seed = 42
-    use_bfloat16 = True
+    use_bfloat16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     target_lang = "cym"
+    source_lang = "eng"
+    
+    # Generation parameters
+    max_new_tokens = 100
+    num_beams = 4
+    length_penalty = 1.0
 
 config = Config()
 
@@ -88,27 +96,30 @@ def setup_logging():
     
     logger = logging.getLogger(__name__)
     logger.info("="*70)
-    logger.info("STREAMING S2S TRAINING (DOCUMENTATION-CORRECT VERSION)")
+    logger.info("STREAMING S2ST TRAINING (CORRECTED WORKFLOW)")
+    logger.info("Using Speech-to-Text fine-tuning approach")
     logger.info("="*70)
     return logger
 
 logger = setup_logging()
 
 # ==================== MODELS ====================
-from transformers import SeamlessM4Tv2Model, AutoProcessor
+from transformers import SeamlessM4Tv2ForSpeechToText, AutoProcessor
 from peft import LoraConfig, get_peft_model, TaskType
 
 def load_models():
     logger.info("\nLoading models...")
     
-    processor = AutoProcessor.from_pretrained(config.s2s_model_name)
+    processor = AutoProcessor.from_pretrained(config.s2st_model_name)
     dtype = torch.bfloat16 if config.use_bfloat16 else torch.float32
     
-    s2s_model = SeamlessM4Tv2Model.from_pretrained(
-        config.s2s_model_name,
+    # Use Speech-to-Text model for fine-tuning
+    model = SeamlessM4Tv2ForSpeechToText.from_pretrained(
+        config.s2st_model_name,
         torch_dtype=dtype
     )
     
+    # Apply LoRA only to text decoder
     lora_config = LoraConfig(
         r=config.lora_r,
         lora_alpha=config.lora_alpha,
@@ -117,15 +128,16 @@ def load_models():
         bias="none",
         task_type=TaskType.SEQ_2_SEQ_LM,
     )
-    s2s_model = get_peft_model(s2s_model, lora_config)
-    s2s_model = s2s_model.to(config.device)
+    model = get_peft_model(model, lora_config)
+    model = model.to(config.device)
     
-    trainable = sum(p.numel() for p in s2s_model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in s2s_model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    logger.info(f"   Model: SeamlessM4Tv2ForSpeechToText")
     logger.info(f"   Trainable: {trainable:,} / {total:,} ({100*trainable/total:.2f}%)")
-    logger.info("   SeamlessM4T supports Welsh (cym) via tgt_lang parameter")
+    logger.info(f"   Target: {config.source_lang} -> {config.target_lang}")
     
-    return {"s2s_model": s2s_model, "processor": processor}
+    return {"model": model, "processor": processor}
 
 # ==================== DATASET ====================
 class StreamingChunkDataset:
@@ -151,7 +163,11 @@ class StreamingChunkDataset:
                 if sr != config.sample_rate:
                     audio_len = int(audio_len * config.sample_rate / sr)
                 
-                num_chunks = max(1, (audio_len - config.chunk_samples) // config.hop_samples + 1)
+                # Only create chunks if audio is long enough
+                if audio_len > config.chunk_samples:
+                    num_chunks = (audio_len - config.chunk_samples) // config.hop_samples + 1
+                else:
+                    num_chunks = 1
                 
                 for chunk_idx in range(num_chunks):
                     self.chunk_indices.append({
@@ -160,7 +176,7 @@ class StreamingChunkDataset:
                         'total_chunks': num_chunks,
                     })
             except Exception as e:
-                logger.warning(f"Error loading {row['eng_audio']}: {e}")
+                logger.warning(f"Error processing {row['eng_audio']}: {e}")
         
         logger.info(f"   {len(self.data)} files -> {len(self.chunk_indices)} chunks ({split})")
     
@@ -176,7 +192,8 @@ class StreamingChunkDataset:
                 resampler = torchaudio.transforms.Resample(sr, config.sample_rate)
                 waveform = resampler(waveform)
             return waveform.squeeze()
-        except:
+        except Exception as e:
+            logger.warning(f"Error loading {path}: {e}")
             return torch.zeros(config.chunk_samples)
     
     def __getitem__(self, idx):
@@ -193,7 +210,7 @@ class StreamingChunkDataset:
         else:
             chunk = audio[start_sample:end_sample]
         
-        # Simple text chunking
+        # Improved text chunking - proportional to audio
         words = row['welsh_transcript'].split()
         total_chunks = chunk_info['total_chunks']
         chunk_idx = chunk_info['chunk_idx']
@@ -201,71 +218,67 @@ class StreamingChunkDataset:
         if total_chunks == 1:
             chunk_text = row['welsh_transcript']
         else:
-            words_per_chunk = max(1, len(words) // total_chunks)
-            start_word = chunk_idx * words_per_chunk
-            end_word = min(start_word + words_per_chunk, len(words))
-            chunk_text = ' '.join(words[start_word:end_word])
+            # Proportional chunking based on audio position
+            total_words = len(words)
+            start_ratio = chunk_idx / total_chunks
+            end_ratio = (chunk_idx + 1) / total_chunks
+            
+            start_word = int(start_ratio * total_words)
+            end_word = int(end_ratio * total_words)
+            
+            if start_word >= total_words:
+                chunk_text = words[-1] if words else ""
+            else:
+                chunk_text = ' '.join(words[start_word:end_word])
         
         return {
             'audio': chunk,
-            'text': chunk_text if chunk_text else row['welsh_transcript'],
+            'text': chunk_text if chunk_text.strip() else row['welsh_transcript'],
             'audio_id': f"{row['audio_id']}_c{chunk_idx}",
         }
 
 def collate_fn(batch):
     return {
-        'audio': torch.stack([s['audio'] for s in batch]),
+        'audio': [s['audio'].numpy() for s in batch],  # List of numpy arrays
         'text': [s['text'] for s in batch],
         'audio_id': [s['audio_id'] for s in batch],
     }
 
-# ==================== CORRECT GENERATION (FIXED) ====================
+# ==================== GENERATION ====================
+@torch.no_grad()
 def generate_translations(model, processor, batch):
     """
-    CORRECT generation based on official HuggingFace documentation.
-    Format: output_tokens[batch_idx].tolist()[0]
-    Reference: https://huggingface.co/docs/transformers/model_doc/seamless_m4t_v2
+    Generate translations using the Speech-to-Text model
     """
     try:
-        audio = batch["audio"].to(config.device)
-        batch_size = len(batch["audio"])
-        
-        # Process audio
+        # Process audio inputs
         audio_inputs = processor(
-            audio=audio.cpu().numpy(),
+            audios=batch["audio"],
             return_tensors="pt",
             sampling_rate=config.sample_rate,
+            padding=True,
         )
         audio_inputs = {k: v.to(config.device) for k, v in audio_inputs.items() 
                        if isinstance(v, torch.Tensor)}
         
-        # Generate text only (no speech for faster validation)
-        with torch.no_grad():
-            output_tokens = model.generate(
-                **audio_inputs,
-                tgt_lang="cym",              # Welsh language code
-                generate_speech=False,       # Text only
-                max_new_tokens=50,
-                min_new_tokens=1,
-                num_beams=3,
-                length_penalty=1.0,
-                repetition_penalty=1.2,
-                no_repeat_ngram_size=3,
-                early_stopping=True,
-            )
+        # Generate with proper parameters
+        generated_ids = model.generate(
+            **audio_inputs,
+            tgt_lang=config.target_lang,
+            max_new_tokens=config.max_new_tokens,
+            num_beams=config.num_beams,
+            length_penalty=config.length_penalty,
+            early_stopping=True,
+            forced_bos_token_id=processor.tokenizer.convert_tokens_to_ids(
+                f"__{config.target_lang}__"
+            ) if hasattr(processor.tokenizer, 'convert_tokens_to_ids') else None,
+        )
         
-        # Decode according to documentation: output_tokens[i].tolist()[0]
+        # Decode translations
         translations = []
-        for i in range(batch_size):
-            try:
-                # Extract token IDs for this sample - CORRECT FORMAT
-                token_ids = output_tokens[i].tolist()[0]
-                # Decode to text
-                text = processor.decode(token_ids, skip_special_tokens=True)
-                translations.append(text.strip())
-            except (IndexError, TypeError, AttributeError) as e:
-                logger.warning(f"Decode error for sample {i}: {e}")
-                translations.append("")
+        for ids in generated_ids:
+            text = processor.decode(ids, skip_special_tokens=True)
+            translations.append(text.strip())
         
         return translations
         
@@ -273,86 +286,11 @@ def generate_translations(model, processor, batch):
         logger.error(f"Generation error: {e}", exc_info=True)
         return [""] * len(batch["audio"])
 
-
-def generate_with_confidence(model, processor, batch):
-    """
-    Generate WITH confidence scores using output_scores=True.
-    Confidence = average of max softmax probabilities per token.
-    """
-    try:
-        audio = batch["audio"].to(config.device)
-        batch_size = len(batch["audio"])
-        
-        audio_inputs = processor(
-            audio=audio.cpu().numpy(),
-            return_tensors="pt",
-            sampling_rate=config.sample_rate,
-        )
-        audio_inputs = {k: v.to(config.device) for k, v in audio_inputs.items() 
-                       if isinstance(v, torch.Tensor)}
-        
-        with torch.no_grad():
-            output_tokens = model.generate(
-                **audio_inputs,
-                tgt_lang="cym",
-                generate_speech=False,
-                max_new_tokens=50,
-                min_new_tokens=1,
-                num_beams=3,
-                length_penalty=1.0,
-                repetition_penalty=1.2,
-                no_repeat_ngram_size=3,
-                early_stopping=True,
-                output_scores=True,           # Get scores for confidence
-                return_dict_in_generate=True, # Return as dict
-            )
-        
-        # Extract sequences from the GenerationOutput
-        if hasattr(output_tokens, 'sequences'):
-            sequences = output_tokens.sequences
-            scores = output_tokens.scores if hasattr(output_tokens, 'scores') else None
-        else:
-            # Fallback if not GenerationOutput
-            sequences = output_tokens
-            scores = None
-        
-        # Decode translations
-        translations = []
-        for i in range(batch_size):
-            try:
-                token_ids = sequences[i].tolist()[0] if isinstance(sequences[i].tolist(), list) and len(sequences[i].tolist()) > 0 else sequences[i].tolist()
-                text = processor.decode(token_ids, skip_special_tokens=True)
-                translations.append(text.strip())
-            except (IndexError, TypeError, AttributeError) as e:
-                logger.warning(f"Decode error for sample {i}: {e}")
-                translations.append("")
-        
-        # Calculate confidence from scores
-        confidences = []
-        if scores and len(scores) > 0:
-            for i in range(batch_size):
-                token_probs = []
-                for step_scores in scores:
-                    if i < step_scores.shape[0]:
-                        probs = torch.softmax(step_scores[i], dim=-1)
-                        token_probs.append(probs.max().item())
-                
-                avg_conf = sum(token_probs) / len(token_probs) if token_probs else 0.5
-                confidences.append(avg_conf)
-        else:
-            confidences = [0.5] * batch_size
-        
-        return translations, confidences
-        
-    except Exception as e:
-        logger.error(f"Generation with confidence error: {e}", exc_info=True)
-        batch_size = len(batch["audio"])
-        return [""] * batch_size, [0.0] * batch_size
-
 # ==================== METRICS ====================
 def calculate_wer(references, hypotheses):
     try:
-        valid = [(r, h) for r, h in zip(references, hypotheses) if r.strip() and h.strip()]
+        valid = [(r, h) for r, h in zip(references, hypotheses) 
+                if r.strip() and h.strip()]
         if not valid:
             return 1.0
         refs, hyps = zip(*valid)
@@ -362,7 +300,8 @@ def calculate_wer(references, hypotheses):
 
 def calculate_bleu(references, hypotheses):
     try:
-        valid = [(r, h) for r, h in zip(references, hypotheses) if r.strip() and h.strip()]
+        valid = [(r, h) for r, h in zip(references, hypotheses) 
+                if r.strip() and h.strip()]
         if not valid:
             return 0.0
         refs, hyps = zip(*valid)
@@ -373,15 +312,20 @@ def calculate_bleu(references, hypotheses):
         return 0.0
 
 def detect_language(text):
-    """Simple Welsh vs English detection."""
+    """Simple Welsh vs English detection"""
+    if not text or not text.strip():
+        return 'Empty'
+    
     text_lower = text.lower()
-    welsh_words = ['yn', 'y', 'yr', 'mae', 'chi', 'ar', 'o', 'ei', 'dw', 'sy', 'bod', 'ddim', 'i', 'na']
-    english_words = ['the', 'and', 'is', 'to', 'of', 'in', 'a', 'you', 'that', 'it', 'for', 'was']
+    welsh_words = ['yn', 'y', 'yr', 'mae', 'chi', 'ar', 'o', 'ei', 'dw', 
+                   'sy', 'bod', 'ddim', 'i', 'na', 'wedi', 'fi']
+    english_words = ['the', 'and', 'is', 'to', 'of', 'in', 'a', 'you', 
+                     'that', 'it', 'for', 'was', 'have', 'with']
     
-    welsh_count = sum(1 for w in welsh_words if f' {w} ' in f' {text_lower} ')
-    english_count = sum(1 for w in english_words if f' {w} ' in f' {text_lower} ')
+    welsh_count = sum(1 for w in welsh_words if f' {w} ' in f' {text_lower} ' or text_lower.startswith(f'{w} ') or text_lower.endswith(f' {w}'))
+    english_count = sum(1 for w in english_words if f' {w} ' in f' {text_lower} ' or text_lower.startswith(f'{w} ') or text_lower.endswith(f' {w}'))
     
-    if english_count > welsh_count and english_count > 1:
+    if english_count > welsh_count and english_count > 0:
         return 'English'
     elif welsh_count > 0:
         return 'Welsh'
@@ -391,7 +335,7 @@ def detect_language(text):
 class Trainer:
     def __init__(self):
         models = load_models()
-        self.model = models["s2s_model"]
+        self.model = models["model"]
         self.processor = models["processor"]
         
         logger.info("\nCreating datasets...")
@@ -404,23 +348,29 @@ class Trainer:
             shuffle=True,
             collate_fn=collate_fn,
             drop_last=True,
-            num_workers=0
+            num_workers=0,
+            pin_memory=True if torch.cuda.is_available() else False,
         )
         self.val_loader = DataLoader(
             val_dataset,
             batch_size=config.batch_size,
             shuffle=False,
             collate_fn=collate_fn,
-            num_workers=0
+            num_workers=0,
         )
         
         logger.info(f"   Train: {len(self.train_loader)} batches")
         logger.info(f"   Val: {len(self.val_loader)} batches")
         
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-        self.optimizer = AdamW(trainable_params, lr=config.learning_rate, weight_decay=config.weight_decay)
+        self.optimizer = AdamW(
+            trainable_params, 
+            lr=config.learning_rate, 
+            weight_decay=config.weight_decay,
+            eps=1e-8,
+        )
         
-        total_steps = len(self.train_loader) * config.num_epochs
+        total_steps = len(self.train_loader) * config.num_epochs // config.gradient_accumulation_steps
         self.scheduler = get_linear_schedule_with_warmup(
             self.optimizer, config.warmup_steps, total_steps
         )
@@ -429,96 +379,111 @@ class Trainer:
         self.best_val_loss = float("inf")
         self.best_bleu = 0.0
         self.best_wer = float("inf")
-        self.best_confidence = 0.0
     
     def train_step(self, batch):
-        audio = batch["audio"].to(config.device)
-        texts = batch["text"]
-        
+        """
+        Training step with proper label preparation
+        """
         try:
+            # Process audio
             audio_inputs = self.processor(
-                audio=audio.cpu().numpy(),
+                audios=batch["audio"],
                 return_tensors="pt",
                 sampling_rate=config.sample_rate,
+                padding=True,
             )
             audio_inputs = {k: v.to(config.device) for k, v in audio_inputs.items() 
                            if isinstance(v, torch.Tensor)}
             
+            # Tokenize target text with proper language prefix
             text_inputs = self.processor.tokenizer(
-                texts, return_tensors="pt", padding=True, truncation=True, max_length=100
+                batch["text"],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=config.max_new_tokens,
             )
-            labels = text_inputs["input_ids"].to(config.device)
             
-            outputs = self.model(**audio_inputs, labels=labels)
+            labels = text_inputs["input_ids"].to(config.device)
+            # Replace padding token id's with -100 so they are ignored in loss
+            labels[labels == self.processor.tokenizer.pad_token_id] = -100
+            
+            # Forward pass
+            outputs = self.model(
+                **audio_inputs,
+                labels=labels,
+            )
+            
             loss = outputs.loss / config.gradient_accumulation_steps
             loss.backward()
             
             return loss.item() * config.gradient_accumulation_steps
+            
         except Exception as e:
-            logger.error(f"Train error: {e}")
+            logger.error(f"Train step error: {e}", exc_info=True)
             return 0.0
     
     @torch.no_grad()
     def validate(self):
-        logger.info("\nValidating...")
+        logger.info("\n" + "="*70)
+        logger.info("VALIDATION")
+        logger.info("="*70)
         self.model.eval()
         
         losses = []
         all_refs = []
         all_hyps = []
-        all_confidences = []
         samples = []
         
-        welsh_count = 0
-        english_count = 0
+        lang_counts = {'Welsh': 0, 'English': 0, 'Unknown': 0, 'Empty': 0}
         
-        for batch_idx, batch in enumerate(tqdm(self.val_loader, desc="Val", leave=False)):
+        for batch_idx, batch in enumerate(tqdm(self.val_loader, desc="Validating")):
             try:
-                audio = batch["audio"].to(config.device)
-                texts = batch["text"]
-                
                 # Calculate loss
                 audio_inputs = self.processor(
-                    audio=audio.cpu().numpy(),
+                    audios=batch["audio"],
                     return_tensors="pt",
                     sampling_rate=config.sample_rate,
+                    padding=True,
                 )
                 audio_inputs = {k: v.to(config.device) for k, v in audio_inputs.items() 
                                if isinstance(v, torch.Tensor)}
                 
                 text_inputs = self.processor.tokenizer(
-                    texts, return_tensors="pt", padding=True, truncation=True, max_length=100
+                    batch["text"],
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=config.max_new_tokens,
                 )
+                
                 labels = text_inputs["input_ids"].to(config.device)
+                labels[labels == self.processor.tokenizer.pad_token_id] = -100
                 
                 outputs = self.model(**audio_inputs, labels=labels)
                 losses.append(outputs.loss.item())
                 
-                # Generate with confidence
-                translations, confidences = generate_with_confidence(self.model, self.processor, batch)
-                all_refs.extend(texts)
+                # Generate translations
+                translations = generate_translations(self.model, self.processor, batch)
+                all_refs.extend(batch["text"])
                 all_hyps.extend(translations)
-                all_confidences.extend(confidences)
                 
                 # Language detection
                 for trans in translations:
                     lang = detect_language(trans)
-                    if lang == 'Welsh':
-                        welsh_count += 1
-                    elif lang == 'English':
-                        english_count += 1
+                    lang_counts[lang] = lang_counts.get(lang, 0) + 1
                 
                 # Collect samples
-                if batch_idx < config.log_sample_predictions:
-                    for i in range(min(2, len(translations))):
-                        if i < len(batch['audio_id']):
-                            samples.append({
-                                'id': batch['audio_id'][i],
-                                'ref': texts[i],
-                                'hyp': translations[i],
-                                'conf': confidences[i],
-                                'lang': detect_language(translations[i])
-                            })
+                if len(samples) < config.log_sample_predictions * 2:
+                    for i in range(len(translations)):
+                        if len(samples) >= config.log_sample_predictions * 2:
+                            break
+                        samples.append({
+                            'id': batch['audio_id'][i],
+                            'ref': batch['text'][i],
+                            'hyp': translations[i],
+                            'lang': detect_language(translations[i]),
+                        })
                 
             except Exception as e:
                 logger.warning(f"Val batch {batch_idx} error: {e}")
@@ -531,117 +496,166 @@ class Trainer:
         avg_loss = sum(losses) / len(losses)
         bleu = calculate_bleu(all_refs, all_hyps)
         wer = calculate_wer(all_refs, all_hyps)
-        avg_conf = sum(all_confidences) / len(all_confidences) if all_confidences else 0.0
         
-        # Count empty predictions
+        # Count empty and non-empty
         empty_count = sum(1 for h in all_hyps if not h.strip())
+        non_empty = len(all_hyps) - empty_count
         
-        # Language stats
-        total_preds = welsh_count + english_count
+        logger.info(f"\n{'='*70}")
+        logger.info(f"RESULTS - Step {self.global_step}")
+        logger.info(f"{'='*70}")
+        logger.info(f"Loss:  {avg_loss:.4f}")
+        logger.info(f"BLEU:  {bleu:.2f}")
+        logger.info(f"WER:   {wer:.4f}")
+        logger.info(f"\nOutput Statistics:")
+        logger.info(f"  Non-empty: {non_empty}/{len(all_hyps)} ({100*non_empty/len(all_hyps):.1f}%)")
+        logger.info(f"  Empty:     {empty_count}/{len(all_hyps)} ({100*empty_count/len(all_hyps):.1f}%)")
         
-        logger.info(f"\nResults (Step {self.global_step}):")
-        logger.info(f"   Loss: {avg_loss:.4f}")
-        logger.info(f"   BLEU: {bleu:.2f}")
-        logger.info(f"   WER: {wer:.4f}")
-        logger.info(f"   Avg Confidence: {avg_conf:.3f}")
-        logger.info(f"   Empty: {empty_count}/{len(all_hyps)}")
-        if total_preds > 0:
-            logger.info(f"   Welsh: {100*welsh_count/total_preds:.1f}% | English: {100*english_count/total_preds:.1f}%")
+        total_detected = sum(v for k, v in lang_counts.items() if k != 'Empty')
+        if total_detected > 0:
+            logger.info(f"\nLanguage Detection (non-empty):")
+            for lang in ['Welsh', 'English', 'Unknown']:
+                count = lang_counts.get(lang, 0)
+                pct = 100 * count / total_detected if total_detected > 0 else 0
+                logger.info(f"  {lang:8s}: {count:3d} ({pct:.1f}%)")
         
         if samples:
-            logger.info("\nSample Predictions:")
-            for s in samples[:5]:
-                logger.info(f"\n   {s['id']} | Conf: {s['conf']:.3f} | Lang: {s['lang']}")
-                logger.info(f"   REF: {s['ref']}")
-                logger.info(f"   HYP: {s['hyp']}")
+            logger.info(f"\n{'='*70}")
+            logger.info("SAMPLE PREDICTIONS")
+            logger.info(f"{'='*70}")
+            for i, s in enumerate(samples[:config.log_sample_predictions], 1):
+                logger.info(f"\nSample {i}: {s['id']}")
+                logger.info(f"  Language: {s['lang']}")
+                logger.info(f"  REF: {s['ref']}")
+                logger.info(f"  HYP: {s['hyp']}")
         
         # Save best checkpoints
+        improved = False
         if avg_loss < self.best_val_loss:
             self.best_val_loss = avg_loss
-            self.save_checkpoint("loss")
-            logger.info("   NEW BEST LOSS!")
+            self.save_checkpoint("best_loss")
+            logger.info(f"\n✓ NEW BEST LOSS: {avg_loss:.4f}")
+            improved = True
         
-        if bleu > self.best_bleu:
+        if bleu > self.best_bleu and bleu > 0:
             self.best_bleu = bleu
-            self.save_checkpoint("bleu")
-            logger.info("   NEW BEST BLEU!")
+            self.save_checkpoint("best_bleu")
+            logger.info(f"✓ NEW BEST BLEU: {bleu:.2f}")
+            improved = True
         
-        if wer < self.best_wer:
+        if wer < self.best_wer and wer < 1.0:
             self.best_wer = wer
-            self.save_checkpoint("wer")
-            logger.info("   NEW BEST WER!")
+            self.save_checkpoint("best_wer")
+            logger.info(f"✓ NEW BEST WER: {wer:.4f}")
+            improved = True
         
-        if avg_conf > self.best_confidence:
-            self.best_confidence = avg_conf
-            self.save_checkpoint("confidence")
-            logger.info("   NEW BEST CONFIDENCE!")
+        if not improved:
+            logger.info(f"\nNo improvement (Best Loss: {self.best_val_loss:.4f}, BLEU: {self.best_bleu:.2f}, WER: {self.best_wer:.4f})")
+        
+        logger.info(f"{'='*70}\n")
         
         self.model.train()
         return avg_loss, bleu, wer
     
-    def save_checkpoint(self, metric):
-        save_dir = Path(config.checkpoints_dir) / f"best_{metric}"
+    def save_checkpoint(self, name):
+        save_dir = Path(config.checkpoints_dir) / f"{name}_step{self.global_step}"
         save_dir.mkdir(exist_ok=True, parents=True)
         self.model.save_pretrained(save_dir)
-        logger.info(f"   Saved to {save_dir}")
+        self.processor.save_pretrained(save_dir)
+        
+        # Save training state
+        state = {
+            'global_step': self.global_step,
+            'best_val_loss': self.best_val_loss,
+            'best_bleu': self.best_bleu,
+            'best_wer': self.best_wer,
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+        }
+        torch.save(state, save_dir / "training_state.pt")
+        logger.info(f"  → Saved checkpoint to {save_dir}")
     
     def train(self):
         logger.info("\n" + "="*70)
-        logger.info("   TRAINING START")
+        logger.info("TRAINING START")
         logger.info("="*70)
         
         for epoch in range(config.num_epochs):
             logger.info(f"\n{'='*70}")
-            logger.info(f"   EPOCH {epoch+1}/{config.num_epochs}")
+            logger.info(f"EPOCH {epoch+1}/{config.num_epochs}")
             logger.info(f"{'='*70}")
             
+            self.model.train()
+            epoch_losses = []
             progress = tqdm(self.train_loader, desc=f"Epoch {epoch+1}")
-            losses = []
             
             for step, batch in enumerate(progress):
                 loss = self.train_step(batch)
-                losses.append(loss)
+                epoch_losses.append(loss)
                 
+                # Gradient accumulation
                 if (step + 1) % config.gradient_accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), config.max_grad_norm)
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), 
+                        config.max_grad_norm
+                    )
                     self.optimizer.step()
                     self.scheduler.step()
                     self.optimizer.zero_grad()
                     self.global_step += 1
                     
+                    # Memory management
                     if self.global_step % config.clear_cache_steps == 0:
-                        torch.cuda.empty_cache()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
                 
-                avg = sum(losses[-10:]) / min(10, len(losses))
-                progress.set_postfix({'loss': f'{avg:.4f}', 'lr': f'{self.scheduler.get_last_lr()[0]:.2e}'})
+                # Progress display
+                recent_loss = sum(epoch_losses[-10:]) / min(10, len(epoch_losses))
+                progress.set_postfix({
+                    'loss': f'{recent_loss:.4f}',
+                    'lr': f'{self.scheduler.get_last_lr()[0]:.2e}'
+                })
                 
+                # Logging
                 if self.global_step > 0 and self.global_step % config.logging_steps == 0:
-                    logger.info(f"Step {self.global_step} - Loss: {avg:.4f}")
+                    logger.info(
+                        f"Step {self.global_step} | "
+                        f"Loss: {recent_loss:.4f} | "
+                        f"LR: {self.scheduler.get_last_lr()[0]:.2e}"
+                    )
                 
+                # Checkpoint saving
                 if self.global_step > 0 and self.global_step % config.save_steps == 0:
-                    save_dir = Path(config.checkpoints_dir) / f"step-{self.global_step}"
+                    save_dir = Path(config.checkpoints_dir) / f"checkpoint_step{self.global_step}"
                     save_dir.mkdir(exist_ok=True, parents=True)
                     self.model.save_pretrained(save_dir)
-                    logger.info(f"Checkpoint: step-{self.global_step}")
+                    logger.info(f"Checkpoint saved: step {self.global_step}")
                 
+                # Validation
                 if self.global_step > 0 and self.global_step % config.eval_steps == 0:
                     self.validate()
+                    self.model.train()
             
-            epoch_avg = sum(losses) / len(losses) if losses else 0.0
-            logger.info(f"\nEpoch {epoch+1} Complete - Avg Loss: {epoch_avg:.4f}")
+            # End of epoch
+            epoch_avg = sum(epoch_losses) / len(epoch_losses) if epoch_losses else 0.0
+            logger.info(f"\nEpoch {epoch+1} Complete | Avg Loss: {epoch_avg:.4f}")
+            
+            # End of epoch validation
             self.validate()
         
         logger.info("\n" + "="*70)
-        logger.info("   TRAINING COMPLETE!")
+        logger.info("TRAINING COMPLETE!")
         logger.info("="*70)
         logger.info(f"Best Loss: {self.best_val_loss:.4f}")
         logger.info(f"Best BLEU: {self.best_bleu:.2f}")
-        logger.info(f"Best WER: {self.best_wer:.4f}")
-        logger.info(f"Best Confidence: {self.best_confidence:.3f}")
+        logger.info(f"Best WER:  {self.best_wer:.4f}")
+        logger.info("="*70 + "\n")
 
 # ==================== MAIN ====================
 if __name__ == "__main__":
+    # Set seeds
     torch.manual_seed(config.seed)
+    random.seed(config.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(config.seed)
     
@@ -649,7 +663,7 @@ if __name__ == "__main__":
         trainer = Trainer()
         trainer.train()
     except KeyboardInterrupt:
-        logger.info("\nTraining interrupted")
+        logger.info("\n⚠ Training interrupted by user")
     except Exception as e:
-        logger.error(f"\nTraining failed: {e}", exc_info=True)
+        logger.error(f"\n❌ Training failed: {e}", exc_info=True)
         raise

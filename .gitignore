@@ -44,6 +44,7 @@ logs/
 nohup.out
 training_history.json
 training_output/
+training_output_final/
 training_output_streaming/
 training_output_with_asr/
 training_output_without_asr/
@@ -59,6 +60,7 @@ checkpoints/
 best_model_*/
 step-*/
 training_state.pt
+.gradio
 
 # ===========================
 # Datasets & Cache
@@ -110,5 +112,3 @@ temp/
 *.exe
 *.ps1
 
-test.py
-diagnose.py

@@ -1,7 +1,4 @@
-"""
-Phase 1: Training Configuration
-Define all hyperparameters and settings for training.
-"""
+### Define all hyperparameters and settings for training
 
 import torch
 from dataclasses import dataclass
@@ -11,7 +8,7 @@ from pathlib import Path
 class TrainingConfig:
     """Configuration for training the speech translation model."""
     
-    # ==================== PATHS ====================
+    # Paths
     # Data directories
     organized_data_dir: str = "organized_data"
     english_audio_dir: str = "organized_data/english_audio"
@@ -25,8 +22,7 @@ class TrainingConfig:
     checkpoints_dir: str = "training_output/checkpoints"
     logs_dir: str = "training_output/logs"
     
-    # ==================== MODEL CONFIGURATION ====================
-    # Base model - Using medium for better fit on 12GB GPU
+    # Model Configuration
     s2s_model_name: str = "facebook/seamless-m4t-v2-large"
     welsh_asr_model: str = "techiaith/wav2vec2-xlsr-ft-cy-en"
     
@@ -45,7 +41,7 @@ class TrainingConfig:
     # Batch and epochs - Conservative settings to avoid OOM
     batch_size: int = 2  # Small batch to be safe (can increase if stable)
     gradient_accumulation_steps: int = 8  # Effective batch = 2 * 8 = 16
-    num_epochs: int = 1
+    num_epochs: int = 5
     
     # Learning rate
     learning_rate: float = 2e-4

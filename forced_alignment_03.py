@@ -16,7 +16,7 @@ os.makedirs(ALIGNMENTS_OUTPUT_DIR, exist_ok=True)
 
 # Model configuration
 WELSH_ASR_MODEL = "techiaith/wav2vec2-xlsr-ft-cy-en"
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cpu"  # change it to "cuda" if you have compatible built
 
 # Load model
 print(f"\nLoading Welsh ASR model: {WELSH_ASR_MODEL}")
