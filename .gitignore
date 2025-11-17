@@ -48,6 +48,7 @@ training_output_final/
 training_output_streaming/
 training_output_with_asr/
 training_output_without_asr/
+baseline_ablation/
 
 # ===========================
 # Checkpoints & Model Weights
@@ -101,7 +102,6 @@ temp/
 # Jupyter / Colab
 # ===========================
 .ipynb_checkpoints/
-*.ipynb
 *.nbconvert.ipynb
 
 # ===========================
