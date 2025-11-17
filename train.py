@@ -264,10 +264,11 @@ class EnhancedTrainer:
             logger.info(f"  Avg Semantic Sim: {avg_sem:.3f}")
             low_sem = sum(1 for s in all_semantic_sims if s < config.semantic_threshold)
             logger.info(f"  Low Semantic Sim: {low_sem}/{len(all_semantic_sims)}")
-        
+                    
         if samples:
             logger.info("\nSamples:")
-            random_samples = random.sample(samples, 5)  
+            num_samples = min(5, len(samples))
+            random_samples = random.sample(samples, num_samples)
             for s in random_samples:
                 logger.info(f"\n  {s['id']}")
                 logger.info(f"Reference: {s['ref']}")
